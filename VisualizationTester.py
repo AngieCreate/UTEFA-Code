@@ -2,15 +2,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Load Dataset and Set Variables
-file_path = "UTEFA_QuantiFi_Contestant_Dataset.csv"
+# file_path = "UTEFA_QuantiFi_Contestant_Dataset.csv"
 # file_path = "scenario_crash_recovery.csv"
-# file_path = "scenario_flat.csv"
+file_path = "scenario_flat.csv"
 # file_path = "scenario_trending.csv"
 # file_path = "scenario_volatile.csv"
 df = pd.read_csv(file_path)
 
 stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
-shortEMA = 50
+shortEMA = 20
 largeEMA = 100
 
 # Calculate EMAs

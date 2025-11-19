@@ -187,8 +187,8 @@ class Context:
         self.day = 0
 
         # EMA short and long period amount
-        self.short_period = 12
-        self.long_period = 50
+        self.short_period = 20
+        self.long_period = 100
         # Store EMA history
         self.short_ema = {stock: [] for stock in self.price_history}
         self.long_ema  = {stock: [] for stock in self.price_history}
@@ -301,7 +301,6 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
     
     letter_to_stock = { "A": "Stock_A", "B": "Stock_B", "C": "Stock_C", "D": "Stock_D", "E": "Stock_E" }
 
-
     # EMA Calculations
     EMA_Calculations(curMarket, context)
 
@@ -319,11 +318,11 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
             vol_thresholds[stock] = median(last_n)
 
     # EMA rankings with volatility filter
-    ema_stock_ranking = EMA_Strategy(curMarket, curPortfolio, context, vol_dict, vol_thresholds)
+    ema_stock_ranking = EMA_Strategy(curMarket, curPortfolio, context)
 
     # Exceute Trades
     # Calculate weights for buy and sell
-    max_buy_percentage = 0.80 # Can sell upto 80% of stocks
+    max_buy_percentage = 0.9 # Can sell upto 80% of stocks
     max_sell_percentage = 1.00 # Can sell all stocks
     buy_weights = ema_stock_ranking.get("Buy_Weights", {})
     sell_weights = ema_stock_ranking.get("Sell_Weights", {})
@@ -395,6 +394,9 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
 
 
 def EMA_Calculations(curMarket: Market, context: Context):
+    """
+    EMA_Calculations calulates the ema for 2 periods, short and long.
+    """
     for stock in curMarket.stocks:
         prices = context.price_history[stock]
         price = prices[-1]
@@ -424,7 +426,11 @@ def EMA_Calculations(curMarket: Market, context: Context):
             new_ema = alpha_l * price + (1 - alpha_l) * prev
             context.long_ema[stock].append(new_ema)
 
-def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context, vol_dict, vol_thresholds):
+def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context):
+    """
+    EMA_Stragtegy returns a dictionary of a buy list,sell list, neutral (no action) list and 
+    weights for buy and sell.
+    """
     stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
 
     results = {
@@ -440,7 +446,7 @@ def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context, v
     bearish_strength = {} # sell strength
 
     for stock in curMarket.stocks:
-        letter = stock[-1]
+        letter = stock[-1] 
         short_list = context.short_ema[stock]
         long_list  = context.long_ema[stock]
 

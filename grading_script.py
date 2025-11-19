@@ -317,11 +317,31 @@ def generate_report(contestant_file: str, portfolio, market, final_value: float,
     total_return = final_value - starting_value
     percent_return = (total_return / starting_value) * 100
     
+    # Calculate Sharpe Ratio
+    daily_returns = []
+    for i in range(1, len(daily_values)):
+        daily_return = (daily_values[i] - daily_values[i-1]) / daily_values[i-1]
+        daily_returns.append(daily_return)
+    
+    if len(daily_returns) > 0:
+        mean_daily_return = sum(daily_returns) / len(daily_returns)
+        variance = sum((r - mean_daily_return) ** 2 for r in daily_returns) / len(daily_returns)
+        std_daily_return = variance ** 0.5
+        
+        # Annualized Sharpe Ratio (assuming 252 trading days, 0% risk-free rate)
+        if std_daily_return > 0:
+            sharpe_ratio = (mean_daily_return / std_daily_return) * (252 ** 0.5)
+        else:
+            sharpe_ratio = 0.0
+    else:
+        sharpe_ratio = 0.0
+    
     print(f"\nPERFORMANCE METRICS:")
     print(f"  Starting Value: ${starting_value:,.2f}")
     print(f"  Final Value: ${final_value:,.2f}")
     print(f"  Total Return: ${total_return:,.2f}")
     print(f"  Percent Return: {percent_return:.2f}%")
+    print(f"  Sharpe Ratio: {sharpe_ratio:.3f}")
     
     # Transaction summary
     print(tracker.get_summary())
@@ -372,7 +392,6 @@ def main():
     """Main grading function"""
     # Check command line arguments
     if len(sys.argv) != 3:
-        print(len(sys.argv))
         print("Usage: python grading_script.py <contestant_file.py> <price_data.csv>")
         print("\nExample:")
         print("  python grading_script.py john_doe_submission.py historical_prices.csv")
@@ -382,7 +401,7 @@ def main():
     price_data_file = sys.argv[2]
     
     print("=" * 70)
-    print("FINANCIAL MODELING COMPETITION - GRADING SCRIPT")
+    print("UTEFA QuantiFi - GRADING SCRIPT")
     print("=" * 70)
     print(f"\nContestant File: {contestant_file}")
     print(f"Price Data File: {price_data_file}\n")
