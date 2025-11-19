@@ -187,15 +187,223 @@ class Context:
         self.day = 0
 
         # EMA short and long period amount
-        self.short_period = 50
+        self.short_period = 20
         self.long_period = 100
-
         # Store EMA history
         self.short_ema = {stock: [] for stock in self.price_history}
         self.long_ema  = {stock: [] for stock in self.price_history}
 
+        # Store trading signals
+        self.signals = {stock: [] for stock in self.price_history}
+
+        # Store volatility history
+        self.volatility_history = {stock: [] for stock in self.price_history}
+
+        # Store returns history
+        self.returns_history = {stock: [] for stock in self.price_history}
 
 def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Context):
+
+    def median(values):
+        """
+        Helper function to calculate the median of a list of numbers.
+        values: List of numerical values
+        Float representing the median value
+        """
+        if not values:
+            return 0.0
+        
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
+        else:
+            return sorted_vals[mid]
+
+    def rolling_std(curMarket: Market, context: Context, period: int = 20):
+        """
+        Calculate rolling standard deviation of recent returns for each stock.
+        append each stock's std to context volatility_history.
+        """
+        vol_dict = {}
+        for stock in curMarket.stocks:
+            returns = context.returns_history[stock]
+            if len(returns) < period:
+                vol_dict[stock] = 0.0
+                context.volatility_history[stock].append(0.0)
+                continue
+            recent_returns = returns[-period:]
+            mean_return = sum(recent_returns) / period
+            variance = sum((r - mean_return) ** 2 for r in recent_returns) / period
+            stddev = variance ** 0.5
+            vol_dict[stock] = stddev
+            context.volatility_history[stock].append(stddev)
+        return vol_dict
+
+    def EMA_Calculations(curMarket: Market, context: Context):
+        """
+        EMA_Calculations calulates the ema for 2 periods, short and long.
+        """
+        for stock in curMarket.stocks:
+            prices = context.price_history[stock]
+            price = prices[-1]
+
+            # Calculate Alpha (Smoothing Factor)
+            alpha_s = 2 / (context.short_period + 1)
+            alpha_l = 2 / (context.long_period + 1)
+
+            # Calculate EMA
+            # Short EMA's intial point (Calculated as a simple average)
+            if len(prices) == context.short_period:
+                init_ema = sum(prices[-context.short_period:]) / context.short_period
+                context.short_ema[stock].append(init_ema)
+            # Everyday after is calculated Short EMA normally
+            elif len(prices) > context.short_period:
+                prev = context.short_ema[stock][-1]
+                new_ema = alpha_s * price + (1 - alpha_s) * prev
+                context.short_ema[stock].append(new_ema)
+
+            # Long EMA's intial point (Calculated as a simple average)
+            if len(prices) == context.long_period:
+                init_ema = sum(prices[-context.long_period:]) / context.long_period
+                context.long_ema[stock].append(init_ema)
+            # Everyday after is calculated Long EMA normally
+            elif len(prices) > context.long_period:
+                prev = context.long_ema[stock][-1]
+                new_ema = alpha_l * price + (1 - alpha_l) * prev
+                context.long_ema[stock].append(new_ema)
+
+    def EMA_Strategy(curMarket: Market, context: Context):
+        """
+        EMA_Stragtegy returns a dictionary of a buy list,sell list, neutral (no action) list and 
+        weights for buy and sell.
+        """
+        stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
+
+        results = {
+            "Buy": [],
+            "Sell": [],
+            "Neutral": [],
+            "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
+            "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+        }
+
+        # weighing
+        bullish_strength = {} # buy strength
+        bearish_strength = {} # sell strength
+
+        for stock in curMarket.stocks:
+            letter = stock[-1] 
+            short_list = context.short_ema[stock]
+            long_list  = context.long_ema[stock]
+
+            # Need at least 2 EMA values to detect a crossover
+            if len(short_list) < 2 or len(long_list) < 2:
+                continue
+
+            s_prev, s_now = short_list[-2], short_list[-1]
+            l_prev, l_now = long_list[-2], long_list[-1]
+
+            # Detect crossovers
+            bullish_crossover = s_prev < l_prev and s_now > l_now
+            bearish_crossover = s_prev > l_prev and s_now < l_now
+            neutral = (s_prev > l_prev and s_now > l_now) or (s_prev < l_prev and s_now < l_now)
+
+            # Calculate buy and sell strength
+            diff = s_now - l_now
+            bull = max(0.0, diff)
+            bear = max(0.0, -diff)  # positive when bearish
+
+            # Neutral signal
+            if neutral: 
+                results["Neutral"].append(letter)
+
+            # Buy signal
+            if bullish_crossover: 
+                results["Buy"].append(letter)
+                bullish_strength[letter] = bull 
+
+            # Sell signal
+            if bearish_crossover: 
+                results["Sell"].append(letter)
+                bearish_strength[letter] = bear 
+
+            # Normalize buy weights independently
+            total_bull = sum(bullish_strength.values())
+            if total_bull > 0:
+                for letter, v in bullish_strength.items():
+                    results["Buy_Weights"][letter] = v / total_bull
+            # Normalize sell weights independently
+            total_bear = sum(bearish_strength.values())
+            if total_bear > 0:
+                for letter, v in bearish_strength.items():
+                    results["Sell_Weights"][letter] = v / total_bear
+
+        return results
+    
+    def momentum_calculation(curMarket: Market, context: Context):
+
+        context.mom_window = 40 # 40 days
+
+        context.momentum_scores = {}
+        for stock in curMarket.stocks:
+            prices = context.price_history[stock]
+            if len(prices) < context.mom_window + 1:
+                context.momentum_scores[stock] = 0.0
+                continue
+            past_price = prices[-(context.mom_window + 1)] # price 10 days ago
+            current_price = prices[-1] # todays price
+            if past_price > 0:
+                momentum = (current_price - past_price) / past_price
+            else:
+                momentum = 0.0
+            context.momentum_scores[stock] = momentum
+
+    def momentum_Strategy(curMarket: Market, context: Context):
+        """
+        momentum_Strategy returns a dictionary of a buy list,sell list, neutral (no action) list and 
+        weights for buy and sell based on momentum scores.
+        """
+        results = {
+            "Buy": [],
+            "Sell": [],
+            "Neutral": [],
+            "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
+            "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+        }
+
+        # weighing
+        bullish_strength = {} # buy strength
+        bearish_strength = {} # sell strength
+
+        for stock in curMarket.stocks:
+            letter = stock[-1] 
+            momentum = context.momentum_scores.get(stock, 0.0)
+
+            if momentum > 0:
+                results["Buy"].append(letter)
+                bullish_strength[letter] = momentum
+            elif momentum < 0:
+                results["Sell"].append(letter)
+                bearish_strength[letter] = -momentum
+            else:
+                results["Neutral"].append(letter)
+
+            # Normalize buy weights independently
+            total_bull = sum(bullish_strength.values())
+            if total_bull > 0:
+                for letter, v in bullish_strength.items():
+                    results["Buy_Weights"][letter] = v / total_bull
+
+            # Normalize sell weights independently
+            total_bear = sum(bearish_strength.values())
+            if total_bear > 0:
+                for letter, v in bearish_strength.items():
+                    results["Sell_Weights"][letter] = v / total_bear
+
+        return results
+    
     """
     Implement your trading strategy here.
     
@@ -235,27 +443,87 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
         "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
     }
     '''
-    letter_to_stock = { "A": "Stock_A", "B": "Stock_B", "C": "Stock_C", "D": "Stock_D", "E": "Stock_E" }
 
+    # compute returns and append to returns_history in context class
+    for stock in curMarket.stocks:
+        prices = context.price_history[stock]
+        if len(prices) >= 2:
+            prev = prices[-2]
+            now = prices[-1]
+            if prev == 0:
+                r = 0.0
+            else:
+                r = (now - prev) / prev
+            context.returns_history[stock].append(r)
+        else:
+            # not enough data to compute return; append 0.0
+            context.returns_history[stock].append(0.0)
+    
+    letter_to_stock = { "A": "Stock_A", "B": "Stock_B", "C": "Stock_C", "D": "Stock_D", "E": "Stock_E" }
 
     # EMA Calculations
     EMA_Calculations(curMarket, context)
+    # Momentum Calculations
+    momentum_calculation(curMarket, context)
+
+    # Volatility Calculations (stddev of recent returns)
+    vol_dict = rolling_std(curMarket, context, period=20)
+    vol_thresholds = {}
+    for stock in curMarket.stocks:
+        vol_history = context.volatility_history[stock]
+        # take last n = 50 days of volatility history or n = whatever is available for median calculation
+        last_n = vol_history[-50:] if len(vol_history) >= 1 else [0.0]
+
+        if len(last_n) < 5:
+            vol_thresholds[stock] = float('inf')  # no threshold if insufficient data does not block early trades
+        else:
+            vol_thresholds[stock] = median(last_n)
 
     # EMA rankings
-    ema_stock_ranking = EMA_Strategy(curMarket, curPortfolio, context)
+    ema_stock_ranking = EMA_Strategy(curMarket, context)
+    
+    # momentum rankings
+    momentum_stock_ranking = momentum_Strategy(curMarket, context)
 
+
+    stock_ranking = {
+        "Buy": [],
+        "Sell": [],
+        "Neutral": [],
+        "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
+        "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+    }
+
+    """
+    # combine rankings (simple average of weights)
+    for letter in ema_stock_ranking["Buy_Weights"]:
+        ema_buy_wt = ema_stock_ranking["Buy_Weights"][letter]
+        mom_buy_wt = momentum_stock_ranking["Buy_Weights"][letter]
+        combined_buy_wt = (ema_buy_wt + mom_buy_wt) / 2
+        stock_ranking["Buy_Weights"][letter] = combined_buy_wt
+    
+    for letter in ema_stock_ranking["Sell_Weights"]:
+        ema_sell_wt = ema_stock_ranking["Sell_Weights"][letter]
+        mom_sell_wt = momentum_stock_ranking["Sell_Weights"][letter]
+        combined_sell_wt = (ema_sell_wt + mom_sell_wt) / 2
+        stock_ranking["Sell_Weights"][letter] = combined_sell_wt
+    """
+
+    for letter in ema_stock_ranking["Buy_Weights"]:
+        stock_ranking["Buy_Weights"][letter] = max(ema_stock_ranking["Buy_Weights"][letter], momentum_stock_ranking["Buy_Weights"][letter])
+        stock_ranking["Sell_Weights"][letter] = max(ema_stock_ranking["Sell_Weights"][letter], momentum_stock_ranking["Sell_Weights"][letter])  
+        
     # Exceute Trades
     # Calculate weights for buy and sell
-    max_buy_percentage = 0.80 # Can sell upto 80% of stocks
+    max_buy_percentage = 0.9 # Can sell upto 80% of stocks
     max_sell_percentage = 1.00 # Can sell all stocks
-    buy_weights = ema_stock_ranking.get("Buy_Weights", {})
-    sell_weights = ema_stock_ranking.get("Sell_Weights", {})
-    total_buy_weight = sum(abs(w) for w in buy_weights.values())
-    total_sell_weight = sum(abs(w) for w in sell_weights.values())
+    total_buy_weight = sum(stock_ranking["Buy_Weights"].values())
+    total_sell_weight = sum(stock_ranking["Sell_Weights"].values())
 
     # Selling Stocks
-    if total_sell_weight > 0:
-        for letter, w in sell_weights.items():
+
+
+    for letter, w in stock_ranking["Sell_Weights"].items():
             if w <= 0:
                 continue
             stock_name = letter_to_stock[letter]
@@ -263,26 +531,40 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
             if held_shares <= 0:
                 continue
             fraction_to_sell = (w / total_sell_weight) * max_sell_percentage
-            shares_to_sell = held_shares * fraction_to_sell
+            vol_factor = 1.0 / (1.0 + vol_dict[stock_name])   # add volatility scaling here
+            shares_to_sell = held_shares * fraction_to_sell * vol_factor
             # avoid tiny trades
             if shares_to_sell > 1e-8:
                 try:
                     print("day: " + str(context.day) + " | " + str(stock_name) +" sold: " + str(shares_to_sell))
                     curPortfolio.sell(stock_name, shares_to_sell, curMarket)
+                    context.signals[stock_name].append(("Sell", context.day))
                 except ValueError:
                     # if sell fails due to rounding, skip
                     pass
     
-    # Buying Stocks
+    # Buying Stocks    
     if total_buy_weight > 0 and curPortfolio.cash > 0:
         cash_to_spend = curPortfolio.cash * max_buy_percentage
-        for letter, w in buy_weights.items():
+        for letter, w in stock_ranking["Buy_Weights"].items():
             if w <= 0:
                 continue
             stock_name = letter_to_stock[letter]
+
+            # sclae buy by volatility
+            vol = vol_dict[stock_name]
+            # only scale if vol > median
+            vol_threshold = vol_thresholds[stock]
+            if vol > vol_threshold:
+                vol_factor = vol_threshold / vol
+            else:
+                vol_factor = 1.0
+            # apply min/max limits
+            vol_factor = max(0.3, min(1.0, vol_factor))  # never scale below 30%
+
             # proportion of cash_to_spend for this stock
             prop = w / total_buy_weight
-            cash_alloc = cash_to_spend * prop
+            cash_alloc = cash_to_spend * prop * vol_factor
             price = curMarket.stocks[stock_name]
             if price <= 0:
                 continue
@@ -295,106 +577,12 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
                 try:
                     print("day: " + str(context.day) + " | " + str(stock_name) + " bought: " + str(shares_to_buy))
                     curPortfolio.buy(stock_name, shares_to_buy, curMarket)
+                    context.signals[stock_name].append(("Buy", context.day))
                 except ValueError:
                     # not enough cash due to rounding or fee; skip
                     pass
 
     context.day += 1
-    
-
-def EMA_Calculations(curMarket: Market, context: Context):
-    for stock in curMarket.stocks:
-        prices = context.price_history[stock]
-        price = prices[-1]
-
-        # Calculate Alpha (Smoothing Factor)
-        alpha_s = 2 / (context.short_period + 1)
-        alpha_l = 2 / (context.long_period + 1)
-
-        # Calculate EMA
-        # Short EMA's intial point (Calculated as a simple average)
-        if len(context.price_history[stock]) == context.short_period:
-            init_ema = sum(prices[-context.short_period:]) / context.short_period
-            context.short_ema[stock].append(init_ema)
-        # Everyday after is calculated Short EMA normally
-        elif len(context.price_history[stock]) > context.short_period:
-            prev = context.short_ema[stock][-1]
-            new_ema = alpha_s * price + (1 - alpha_s) * prev
-            context.short_ema[stock].append(new_ema)
-
-        # Long EMA's intial point (Calculated as a simple average)
-        if len(context.price_history[stock]) == context.long_period:
-            init_ema = sum(prices[-context.long_period:]) / context.long_period
-            context.long_ema[stock].append(init_ema)
-        # Everyday after is calculated Long EMA normally
-        elif len(context.price_history[stock]) > context.long_period:
-            prev = context.long_ema[stock][-1]
-            new_ema = alpha_l * price + (1 - alpha_l) * prev
-            context.long_ema[stock].append(new_ema)
-
-def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context):
-    stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
-
-    results = {
-        "Buy": [],
-        "Sell": [],
-        "Neutral": [],
-        "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
-        "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
-    }
-
-    # weighing
-    bullish_strength = {} # buy strength
-    bearish_strength = {} # sell strength
-
-    for stock in curMarket.stocks:
-        letter = stock[-1]
-        short_list = context.short_ema[stock]
-        long_list  = context.long_ema[stock]
-
-        # Need at least 2 EMA values to detect a crossover
-        if len(short_list) < 2 or len(long_list) < 2:
-            continue
-
-        s_prev, s_now = short_list[-2], short_list[-1]
-        l_prev, l_now = long_list[-2], long_list[-1]
-
-        # Detect crossovers
-        bullish_crossover = s_prev < l_prev and s_now > l_now
-        bearish_crossover = s_prev > l_prev and s_now < l_now
-        neutral = (s_prev > l_prev and s_now > l_now) or (s_prev < l_prev and s_now < l_now)
-
-        # Calculate buy and sell strength
-        diff = s_now - l_now
-        bull = max(0.0, diff)
-        bear = max(0.0, -diff)  # positive when bearish
-
-        # Neutral signal
-        if neutral: 
-            results["Neutral"].append(letter)
-
-        # Buy signal
-        if bullish_crossover: 
-            results["Buy"].append(letter)
-            bullish_strength[letter] = bull
-
-        # Sell signal
-        if bearish_crossover: 
-            results["Sell"].append(letter)
-            bearish_strength[letter] = bear
-
-        # Normalize buy weights independently
-        total_bull = sum(bullish_strength.values())
-        if total_bull > 0:
-            for letter, v in bullish_strength.items():
-                results["Buy_Weights"][letter] = v / total_bull
-        # Normalize sell weights independently
-        total_bear = sum(bearish_strength.values())
-        if total_bear > 0:
-            for letter, v in bearish_strength.items():
-                results["Sell_Weights"][letter] = v / total_bear
-
-    return results
 
 ###SIMULATION###
 if __name__ == "__main__":
@@ -410,3 +598,4 @@ if __name__ == "__main__":
     # Print final portfolio value
     final_value = portfolio.evaluate(market)
     print(f"Final Portfolio Value: ${final_value:,.2f}")
+    print(context.signals)
