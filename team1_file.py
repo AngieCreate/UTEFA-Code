@@ -202,74 +202,151 @@ class Context:
         # Store returns history
         self.returns_history = {stock: [] for stock in self.price_history}
 
-def median(values):
-    """
-    Helper function to calculate the median of a list of numbers.
-    
-    Args:
-        values: List of numerical values
-        
-    Returns:
-        Float representing the median value
-    """
-    if not values:
-         return 0.0
-    
-    sorted_vals = sorted(values)
-    n = len(sorted_vals)
-    mid = n // 2
-    if n % 2 == 0:
-        return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
-    else:
-        return sorted_vals[mid]
-
-def rolling_std(curMarket: Market, context: Context, period: int = 20):
-    """
-    Calculate rolling standard deviation of recent returns for each stock.
-    append each stock's std to context volatility_history.
-    """
-    vol_dict = {}
-    for stock in curMarket.stocks:
-        returns = context.returns_history[stock]
-        if len(returns) < period:
-            vol_dict[stock] = 0.0
-            context.volatility_history[stock].append(0.0)
-            continue
-        recent_returns = returns[-period:]
-        mean_return = sum(recent_returns) / period
-        variance = sum((r - mean_return) ** 2 for r in recent_returns) / period
-        stddev = variance ** 0.5
-        vol_dict[stock] = stddev
-        context.volatility_history[stock].append(stddev)
-    return vol_dict
-
 def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Context):
-    """
-    Implement your trading strategy here.
-    
-    This function is called once per trading day, before the market updates.
-    
-    Args:
-        curMarket: Current Market object with stock prices
-        curPortfolio: Current Portfolio object with your holdings
-        context: Context object for storing strategy data
-    
-    Example strategy (DO NOT USE THIS - IT'S JUST A PLACEHOLDER):
-        # Track prices
+    # Supporting Methods
+    def median(values):
+        """
+        Helper function to calculate the median of a list of numbers.
+        
+        Args:
+            values: List of numerical values
+            
+        Returns:
+            Float representing the median value
+        """
+        if not values:
+            return 0.0
+        
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
+        else:
+            return sorted_vals[mid]
+
+    def rolling_std(curMarket: Market, context: Context, period: int = 20):
+        """
+        Calculate rolling standard deviation of recent returns for each stock.
+        append each stock's std to context volatility_history.
+        """
+        vol_dict = {}
         for stock in curMarket.stocks:
-            context.price_history[stock].append(curMarket.stocks[stock])
-        
-        
-        # Simple buy-and-hold: invest all cash on day 0
-        if context.day == 0:
-            for stock in curMarket.stocks:
-                max_shares = curPortfolio.get_max_buyable_shares(stock, curMarket)
-                if max_shares > 0:
-                    curPortfolio.buy(stock, max_shares / 5, curMarket)  # Split equally
-        
-        context.day += 1
-    """
-    # YOUR TRADING STRATEGY GOES HERE
+            returns = context.returns_history[stock]
+            if len(returns) < period:
+                vol_dict[stock] = 0.0
+                context.volatility_history[stock].append(0.0)
+                continue
+            recent_returns = returns[-period:]
+            mean_return = sum(recent_returns) / period
+            variance = sum((r - mean_return) ** 2 for r in recent_returns) / period
+            stddev = variance ** 0.5
+            vol_dict[stock] = stddev
+            context.volatility_history[stock].append(stddev)
+        return vol_dict
+
+    def EMA_Calculations(curMarket: Market, context: Context):
+        """
+        EMA_Calculations calulates the ema for 2 periods, short and long.
+        """
+        for stock in curMarket.stocks:
+            prices = context.price_history[stock]
+            price = prices[-1]
+
+            # Calculate Alpha (Smoothing Factor)
+            alpha_s = 2 / (context.short_period + 1)
+            alpha_l = 2 / (context.long_period + 1)
+
+            # Calculate EMA
+            # Short EMA's intial point (Calculated as a simple average)
+            if len(prices) == context.short_period:
+                init_ema = sum(prices[-context.short_period:]) / context.short_period
+                context.short_ema[stock].append(init_ema)
+            # Everyday after is calculated Short EMA normally
+            elif len(prices) > context.short_period:
+                prev = context.short_ema[stock][-1]
+                new_ema = alpha_s * price + (1 - alpha_s) * prev
+                context.short_ema[stock].append(new_ema)
+
+            # Long EMA's intial point (Calculated as a simple average)
+            if len(prices) == context.long_period:
+                init_ema = sum(prices[-context.long_period:]) / context.long_period
+                context.long_ema[stock].append(init_ema)
+            # Everyday after is calculated Long EMA normally
+            elif len(prices) > context.long_period:
+                prev = context.long_ema[stock][-1]
+                new_ema = alpha_l * price + (1 - alpha_l) * prev
+                context.long_ema[stock].append(new_ema)
+
+    def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context):
+        """
+        EMA_Stragtegy returns a dictionary of a buy list,sell list, neutral (no action) list and 
+        weights for buy and sell.
+        """
+        stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
+
+        results = {
+            "Buy": [],
+            "Sell": [],
+            "Neutral": [],
+            "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
+            "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+        }
+
+        # weighing
+        bullish_strength = {} # buy strength
+        bearish_strength = {} # sell strength
+
+        for stock in curMarket.stocks:
+            letter = stock[-1] 
+            short_list = context.short_ema[stock]
+            long_list  = context.long_ema[stock]
+
+            # Need at least 2 EMA values to detect a crossover
+            if len(short_list) < 2 or len(long_list) < 2:
+                continue
+
+            s_prev, s_now = short_list[-2], short_list[-1]
+            l_prev, l_now = long_list[-2], long_list[-1]
+
+            # Detect crossovers
+            bullish_crossover = s_prev < l_prev and s_now > l_now
+            bearish_crossover = s_prev > l_prev and s_now < l_now
+            neutral = (s_prev > l_prev and s_now > l_now) or (s_prev < l_prev and s_now < l_now)
+
+            # Calculate buy and sell strength
+            diff = s_now - l_now
+            bull = max(0.0, diff)
+            bear = max(0.0, -diff)  # positive when bearish
+
+            # Neutral signal
+            if neutral: 
+                results["Neutral"].append(letter)
+
+            # Buy signal
+            if bullish_crossover: 
+                results["Buy"].append(letter)
+                bullish_strength[letter] = bull 
+
+            # Sell signal
+            if bearish_crossover: 
+                results["Sell"].append(letter)
+                bearish_strength[letter] = bear 
+
+            # Normalize buy weights independently
+            total_bull = sum(bullish_strength.values())
+            if total_bull > 0:
+                for letter, v in bullish_strength.items():
+                    results["Buy_Weights"][letter] = v / total_bull
+            # Normalize sell weights independently
+            total_bear = sum(bearish_strength.values())
+            if total_bear > 0:
+                for letter, v in bearish_strength.items():
+                    results["Sell_Weights"][letter] = v / total_bear
+
+        return results
+
+    # Trading Strategy
     # Appending todays'price to price_history
     for stock in curMarket.stocks:
         context.price_history[stock].append(curMarket.stocks[stock])
@@ -391,108 +468,6 @@ def update_portfolio(curMarket: Market, curPortfolio: Portfolio, context: Contex
                     pass
 
     context.day += 1
-
-
-def EMA_Calculations(curMarket: Market, context: Context):
-    """
-    EMA_Calculations calulates the ema for 2 periods, short and long.
-    """
-    for stock in curMarket.stocks:
-        prices = context.price_history[stock]
-        price = prices[-1]
-
-        # Calculate Alpha (Smoothing Factor)
-        alpha_s = 2 / (context.short_period + 1)
-        alpha_l = 2 / (context.long_period + 1)
-
-        # Calculate EMA
-        # Short EMA's intial point (Calculated as a simple average)
-        if len(prices) == context.short_period:
-            init_ema = sum(prices[-context.short_period:]) / context.short_period
-            context.short_ema[stock].append(init_ema)
-        # Everyday after is calculated Short EMA normally
-        elif len(prices) > context.short_period:
-            prev = context.short_ema[stock][-1]
-            new_ema = alpha_s * price + (1 - alpha_s) * prev
-            context.short_ema[stock].append(new_ema)
-
-        # Long EMA's intial point (Calculated as a simple average)
-        if len(prices) == context.long_period:
-            init_ema = sum(prices[-context.long_period:]) / context.long_period
-            context.long_ema[stock].append(init_ema)
-        # Everyday after is calculated Long EMA normally
-        elif len(prices) > context.long_period:
-            prev = context.long_ema[stock][-1]
-            new_ema = alpha_l * price + (1 - alpha_l) * prev
-            context.long_ema[stock].append(new_ema)
-
-def EMA_Strategy(curMarket: Market, curPortfolio: Portfolio, context: Context):
-    """
-    EMA_Stragtegy returns a dictionary of a buy list,sell list, neutral (no action) list and 
-    weights for buy and sell.
-    """
-    stocks = ["Stock_A", "Stock_B", "Stock_C", "Stock_D", "Stock_E"]
-
-    results = {
-        "Buy": [],
-        "Sell": [],
-        "Neutral": [],
-        "Buy_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0},
-        "Sell_Weights": {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
-    }
-
-    # weighing
-    bullish_strength = {} # buy strength
-    bearish_strength = {} # sell strength
-
-    for stock in curMarket.stocks:
-        letter = stock[-1] 
-        short_list = context.short_ema[stock]
-        long_list  = context.long_ema[stock]
-
-        # Need at least 2 EMA values to detect a crossover
-        if len(short_list) < 2 or len(long_list) < 2:
-            continue
-
-        s_prev, s_now = short_list[-2], short_list[-1]
-        l_prev, l_now = long_list[-2], long_list[-1]
-
-        # Detect crossovers
-        bullish_crossover = s_prev < l_prev and s_now > l_now
-        bearish_crossover = s_prev > l_prev and s_now < l_now
-        neutral = (s_prev > l_prev and s_now > l_now) or (s_prev < l_prev and s_now < l_now)
-
-        # Calculate buy and sell strength
-        diff = s_now - l_now
-        bull = max(0.0, diff)
-        bear = max(0.0, -diff)  # positive when bearish
-
-        # Neutral signal
-        if neutral: 
-            results["Neutral"].append(letter)
-
-        # Buy signal
-        if bullish_crossover: 
-            results["Buy"].append(letter)
-            bullish_strength[letter] = bull 
-
-        # Sell signal
-        if bearish_crossover: 
-            results["Sell"].append(letter)
-            bearish_strength[letter] = bear 
-
-        # Normalize buy weights independently
-        total_bull = sum(bullish_strength.values())
-        if total_bull > 0:
-            for letter, v in bullish_strength.items():
-                results["Buy_Weights"][letter] = v / total_bull
-        # Normalize sell weights independently
-        total_bear = sum(bearish_strength.values())
-        if total_bear > 0:
-            for letter, v in bearish_strength.items():
-                results["Sell_Weights"][letter] = v / total_bear
-
-    return results
 
 ###SIMULATION###
 if __name__ == "__main__":
